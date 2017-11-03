@@ -1,0 +1,904 @@
+
+Procedure.java
+
+package com.ccavenue.store.common;
+
+/**
+ *  Implement this interface to create support for new database dialect
+ * 
+ * @author developer-201
+ *
+ */
+public interface Procedure {
+
+	/**
+	 *  Implement this method to decide how the procedure execution will work for your database dialect 
+	 * 
+	 * @param procedureMetaData
+	 * @return 
+	 * @throws Exception
+	 */
+	public ProcedureMetaData execute(ProcedureMetaData procedureMetaData) throws Exception;
+
+	public ProcedureMetaData execute(ProcedureMetaData procedureMetaData, String jndi) throws Exception;
+
+	/**
+	 * Implement this method to decide how the procedure resources closure will be done for your database dialect 
+	 *
+	 * @throws Exception
+	 */
+	public void closeResources() throws Exception;
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+ProcedureFactory.java
+
+
+package com.ccavenue.store.common;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+
+//import org.apache.log4j.Logger;
+
+
+public final class ProcedureFactory
+{
+
+	// static Logger LOG = Logger.getLogger(ProcedureFactory.class.getName());
+
+	private static String	DATABASE	= null;
+
+	private ProcedureFactory()
+	{
+
+	}
+
+	// This block initialize the DATABASE using connection metadata
+	static
+	{
+
+		Connection dbConnection = null;
+		try
+		{
+			dbConnection = ConnectionManager.getConnection();
+			DatabaseMetaData dbMetaData = dbConnection.getMetaData();
+			DATABASE = dbMetaData.getDatabaseProductName();
+		} catch (Exception e)
+		{
+			// LOG.error("Exception :" + e);
+		} finally
+		{
+			ConnectionManager.closeConnection(dbConnection);
+		}
+	}
+
+	
+
+
+
+/**
+	 * This method returns object of the implemented class for "Oracle" or
+	 * "Microsoft SQL Server" as per the DATABASE that is used
+	 * 
+	 * @return
+	 */
+	public static Procedure getProcedure()
+	{
+
+		try
+		{
+			/**
+			 * Added by Himanshu Jain for the getting connection without server
+			 * restart in case of change of password or DB
+			 **/
+			if (DATABASE == null)
+			{
+				Connection dbConnection = null;
+				dbConnection = ConnectionManager.getConnection();
+				DatabaseMetaData dbMetaData = dbConnection.getMetaData();
+				DATABASE = dbMetaData.getDatabaseProductName();
+			}
+
+			if (DATABASE.equalsIgnoreCase("Oracle"))
+			{
+				return new OracleProcedure();
+			} else if (DATABASE.equalsIgnoreCase("Microsoft SQL Server"))
+			{
+				return new MssqlProcedure();
+			} else
+			{
+				return null;
+			}
+		} catch (Exception e)
+		{
+			// LOG.error("Exception :" + e);
+		}
+		return null;
+	}
+}
+
+
+
+
+ProcedureMetaData.java
+
+
+package com.ccavenue.store.common;
+
+import java.util.ArrayList;
+
+
+public class ProcedureMetaData
+{
+
+// static Logger LOG = Logger.getLogger(ProcedureMetaData.class.getName());
+
+public static final String	NOT_AN_OUT_PARAMETER="NOT_AN_OUT_PARAMETER";
+public static final String	NOT_AN_IN_PARAMETER="NOT_AN_IN_PARAMETER";
+	
+public static final int		TYPE_CURSOR	= 786;
+
+	private int	ParameterCount= 0;
+	private int	outCursorParameterCount	= 0;
+	private final String		dbProcedureName;
+	private final String		dbConnectionType;
+	ArrayList<Parameter>	dbProcedureParameters;
+
+	
+	public ProcedureMetaData(String dbProcedureName)
+	{
+		this.dbProcedureName = dbProcedureName;
+		this.dbConnectionType = "";
+		this.dbProcedureParameters = new ArrayList();
+
+	}
+
+	public ProcedureMetaData(String dbProcedureName, String dbConnectionType)
+	{
+		this.dbProcedureName = dbProcedureName;
+		this.dbConnectionType = dbConnectionType;
+		this.dbProcedureParameters = new ArrayList();
+	}
+
+	public void addParameter(Object inputValue, int sqlType, boolean isOutParameter)
+	{
+		// LOG.debug("Input value : " + inputValue + " Position :" +
+		// ParameterCount);
+		System.out.println("Input value : " + inputValue + " Position :" + ParameterCount);
+
+		dbProcedureParameters.add(ParameterCount, new Parameter(inputValue,sqlType,isOutParameter));
+		ParameterCount++;
+		if (sqlType == TYPE_CURSOR && isOutParameter)
+		{
+			outCursorParameterCount++;
+		}
+	}
+
+	public int getParameterCount()
+	{
+		return dbProcedureParameters.size();
+	}
+
+	public int getCursorParameterCount()
+	{
+		return outCursorParameterCount;
+	}
+
+	public Parameter getParameterByindex(int nIndex)
+	{
+		return dbProcedureParameters.get(nIndex - 1);
+	}
+
+	/**
+	 * @return the dbConnectionType
+	 */
+	
+	public String getDbConnectionType()
+	{
+		return dbConnectionType;
+	}
+
+	public String getProcedureQuery(boolean isCursorIncluded)
+	{
+		StringBuffer query = new StringBuffer("{call " + dbProcedureName + "(");
+		if (isCursorIncluded)
+		{
+			for (int i = 1; i <= ParameterCount; i++)
+			{
+				query.append("?");
+				if (i < ParameterCount)
+				{
+					query.append(",");
+				}
+			}
+		} else
+		{
+			int count = ParameterCount - outCursorParameterCount;
+			for (int i = 1; i <= count; i++)
+			{
+				query.append("?");
+				if (i < count)
+				{
+					query.append(",");
+				}
+			}
+		}
+		query.append(")}");
+		return query.toString();
+	}
+	public class Parameter
+	{
+		boolean	isOutParameter;
+		int		sqlType;
+		Object	outputValue;
+		Object	inputValue;
+
+		/**
+		 * 
+		 */
+		public Parameter(Object inputValue, int sqlType, boolean isOutParameter)
+		{
+			this.isOutParameter = isOutParameter;
+			this.sqlType = sqlType;
+			// System.out.print("initialize input"+inputValue);
+			if (!isOutParameter)
+			{
+			this.outputValue = ProcedureMetaData.NOT_AN_OUT_PARAMETER;
+			} else
+			{
+				this.inputValue = ProcedureMetaData.NOT_AN_IN_PARAMETER;
+			}
+			if (!isOutParameter && inputValue != null)
+			{
+				this.inputValue = inputValue;
+			}
+
+		}
+
+		/**
+		 * @return the outputValue
+		 */
+		
+		public Object getOutputValue()
+		{
+			return outputValue;
+		}
+
+		/**
+		 * @param outputValue
+		 *            the outputValue to set
+		 */
+		
+		public void setOutputValue(Object outputValue)
+		{
+			this.outputValue = outputValue;
+		}
+
+	}}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+MssqlProcedure.java
+
+package com.ccavenue.store.common;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+import com.ccavenue.store.common.ProcedureMetaData.Parameter;
+import com.sun.rowset.CachedRowSetImpl;
+
+//import com.sun.rowset.CachedRowSetImpl;
+
+
+public class MssqlProcedure implements Procedure {
+
+	// static Logger LOG = Logger.getLogger(MssqlProcedure.class.getName());
+	ProcedureMetaData mProcedureMetaData;
+	Connection dbConnection;
+	CallableStatement dbCallableStatement;
+	boolean isResultset = false;
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.ccavenue.mars.common.Procedure#closeResources()
+	 */
+	public void closeResources() throws Exception {
+
+		try {
+			if (dbCallableStatement != null)
+				dbCallableStatement.close();
+			if (dbConnection != null)
+				dbConnection.close();
+		} catch (Exception ex) {
+			// LOG.error("SQL ERROR :" + ex.getStackTrace());
+		}
+
+	}
+
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see com.ccavenue.mars.common.Procedure#execute(java.lang.String, java.lang.String)
+	 */
+public ProcedureMetaData execute(ProcedureMetaData procedureMetaData) throws Exception {
+
+		// LOG.debug("Executing  : ProcedureMetaData execute");
+
+		try {
+			mProcedureMetaData = procedureMetaData;
+			if (mProcedureMetaData.getDbConnectionType() == "") {
+				dbConnection = ConnectionManager.getConnection();
+			} else {
+				if (mProcedureMetaData.getDbConnectionType() == "SELECT") {
+							   						
+
+					dbConnection=ConnectionManager.getConnection("SELECT");
+				} else if (mProcedureMetaData.getDbConnectionType()=="INSERT") {
+					dbConnection = ConnectionManager.getConnection("INSERT");
+				} else if (mProcedureMetaData.getDbConnectionType() == "UPDATE") {
+					dbConnection = ConnectionManager.getConnection("UPDATE");
+				} else if (mProcedureMetaData.getDbConnectionType() == "DELETE") {
+					dbConnection = ConnectionManager.getConnection("DELETE");
+				} else {
+					dbConnection = ConnectionManager.getConnection();
+				}
+			}
+			dbCallableStatement = dbConnection.prepareCall(mProcedureMetaData.getProcedureQuery(false));
+			int mCounter = 0;
+			int mParamCount = mProcedureMetaData.dbProcedureParameters.size();
+			int mCursorParamCount = mProcedureMetaData.getCursorParameterCount();
+			int mParamPosition = 1;
+			while (mCounter < mParamCount) {
+				Parameter param = mProcedureMetaData.dbProcedureParameters.get(mCounter);
+
+				if (param.isOutParameter) {
+
+					if (param.sqlType == ProcedureMetaData.TYPE_CURSOR) {
+						// dbCallableStatement.registerOutParameter(mParamPosition,OracleTypes.CURSOR);
+					} else {
+						dbCallableStatement.registerOutParameter(mParamPosition, param.sqlType);
+					}
+
+				} else {
+
+
+switch (param.sqlType) {
+
+	case java.sql.Types.VARCHAR:
+			dbCallableStatement.setString(mParamPosition, (String) param.inputValue);
+			break;
+	case java.sql.Types.BOOLEAN:
+		dbCallableStatement.setBoolean(mParamPosition((Boolean)param.inputValue).booleanValue());
+		break;
+	case java.sql.Types.INTEGER:
+		dbCallableStatement.setInt(mParamPosition, ((Integer) param.inputValue).intValue());
+		break;
+	case java.sql.Types.NUMERIC:
+		dbCallableStatement.setLong(mParamPosition, ((Long) param.inputValue).longValue());
+		break;
+	case java.sql.Types.DOUBLE:
+		dbCallableStatement.setDouble(mParamPosition, ((Double) param.inputValue).doubleValue());
+		break;
+	case java.sql.Types.BIGINT:
+		dbCallableStatement.setLong(mParamPosition, ((Long) param.inputValue).longValue());
+		break;
+	case java.sql.Types.VARBINARY:
+		String imgPath = (String) param.inputValue;
+		if (!imgPath.equalsIgnoreCase("")) {
+		FileInputStream fis;
+		File image = new File((String) param.inputValue);
+		fis = new FileInputStream(image);
+		dbCallableStatement.setBinaryStream(mParamPosition, (fis), (int) image.length());
+		} else {
+		dbCallableStatement.setBinaryStream(mParamPosition, null, 0);
+		}
+		break;
+	default:
+		throw new Exception("Data Type Not supported ");
+		}
+
+		}
+		mCounter++;
+		mParamPosition++;
+		}
+
+			isResultset = dbCallableStatement.execute();
+			System.out.println("isResultset : " + isResultset);
+			System.out.println(mParamCount - mCursorParamCount);
+
+			int startindexPosition = (mParamCount - mCursorParamCount);
+			int endindexPosition = mParamCount - 1;
+			int counter = 0;
+			while (startindexPosition <= endindexPosition) {
+				ResultSet dbResultSet = null;
+				CachedRowSetImpl rowset = null;
+		System.out.println("start index :" + startindexPosition + "startindexPosition :" + endindexPosition);
+				if (isResultset) {
+					if (counter == 0) {
+						System.out.println("Inside getresultset");
+						dbResultSet = dbCallableStatement.getResultSet();
+					} else {
+						System.out.println("Inside else getresultset");
+						isResultset = dbCallableStatement.getMoreResults();
+						if (isResultset)
+							dbResultSet = dbCallableStatement.getResultSet();
+					}
+
+					rowset = new CachedRowSetImpl();
+					if (dbResultSet != null) {
+						rowset.populate(dbResultSet);
+						System.out.println("Inside Seting Rowset");
+					}
+
+					mProcedureMetaData.dbProcedureParameters.get(startindexPosition).setOutputValue(rowset);
+				}
+
+				startindexPosition++;
+				counter++;
+			}
+
+			mCounter = 0;
+			mParamPosition = 1;
+			System.out.println("mParamCount :" + mParamCount);
+			while (mCounter < mParamCount) {
+				Parameter param = mProcedureMetaData.dbProcedureParameters.get(mCounter);
+				System.out.println("counter :" + mCounter + " Is Out :" + param.isOutParameter);
+				if (param.isOutParameter) {
+					System.out.print("OUT PARAMERTERS " + param.sqlType);
+					if (param.sqlType == ProcedureMetaData.TYPE_CURSOR) {
+						// NO CODE ZONE
+					} else {
+
+
+
+
+
+
+
+				switch (param.sqlType) {
+
+						case java.sql.Types.VARCHAR:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getString(mParamPosition));
+							break;
+						case java.sql.Types.BOOLEAN:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getBoolean(mParamPosition));
+							break;
+						case java.sql.Types.INTEGER:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getInt(mParamPosition));
+							break;
+						case java.sql.Types.NUMERIC:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getLong(mParamPosition));
+							break;
+						case java.sql.Types.DOUBLE:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getDouble(mParamPosition));
+							break;
+						default:
+							throw new Exception("Data Type Not supported ");
+						}
+
+					}
+
+				}
+				mCounter++;
+				mParamPosition++;
+			}
+
+			// LOG.debug("Executing  : ProcedureMetaData ending");
+
+		} catch (SQLException se) {
+			// LOG.equals("SQL ERROR :" + se.getStackTrace());
+			System.out.println("SQL ERROR :");
+			se.printStackTrace();
+		} catch (Exception e) {
+			// LOG.equals("SQL ERROR :" + e.getStackTrace());
+			System.out.println("General ERROR :");
+			e.printStackTrace();
+		} finally {
+			/*
+			 * try{
+			 * 
+			 * }catch(Exception ex){ LOG.equals("SQL ERROR :"+ex.getStackTrace()); }
+			 */
+		}
+		return mProcedureMetaData;
+
+	}
+
+	public ProcedureMetaData execute(ProcedureMetaData procedureMetaData, String jndi) throws Exception {
+
+		// .debug("Executing  : ProcedureMetaData execute");
+		try {
+			mProcedureMetaData = procedureMetaData;
+			if (mProcedureMetaData.getDbConnectionType() == "") {
+				dbConnection = ConnectionManager.getConnection(jndi);
+			} else {
+				if (mProcedureMetaData.getDbConnectionType() == "SELECT") {
+					dbConnection = ConnectionManager.getConnection("SELECT");
+				} else if (mProcedureMetaData.getDbConnectionType() == "INSERT") {
+					dbConnection = ConnectionManager.getConnection("INSERT");
+				} else if (mProcedureMetaData.getDbConnectionType() == "UPDATE") {
+					dbConnection = ConnectionManager.getConnection("UPDATE");
+				} else if (mProcedureMetaData.getDbConnectionType() == "DELETE") {
+					dbConnection = ConnectionManager.getConnection("DELETE");
+				} else {
+					dbConnection = ConnectionManager.getConnection();
+				}
+			}
+			// System.out.println("Callable Statement :"+mProcedureMetaData.getProcedureQuery(false));
+			dbCallableStatement = dbConnection.prepareCall(mProcedureMetaData.getProcedureQuery(false));
+			int mCounter = 0;
+			int mParamCount = mProcedureMetaData.dbProcedureParameters.size();
+			int mCursorParamCount = mProcedureMetaData.getCursorParameterCount();
+			int mParamPosition = 1;
+			while (mCounter < mParamCount) {
+				Parameter param = mProcedureMetaData.dbProcedureParameters.get(mCounter);
+				if (param.isOutParameter) {
+					if (param.sqlType == ProcedureMetaData.TYPE_CURSOR) {
+						// dbCallableStatement.registerOutParameter(mParamPosition,OracleTypes.CURSOR);
+					} else {
+						dbCallableStatement.registerOutParameter(mParamPosition, param.sqlType);
+					}
+				} else {
+					switch (param.sqlType) {
+					case java.sql.Types.VARCHAR:
+						dbCallableStatement.setString(mParamPosition, (String) param.inputValue);
+						break;
+					case java.sql.Types.BOOLEAN:
+						dbCallableStatement.setBoolean(mParamPosition, ((Boolean) param.inputValue).booleanValue());
+						break;
+					case java.sql.Types.INTEGER:
+						dbCallableStatement.setInt(mParamPosition, ((Integer) param.inputValue).intValue());
+						break;
+					case java.sql.Types.NUMERIC:
+						System.out.println("param.inputValue : " + ((Long) param.inputValue).longValue());
+						dbCallableStatement.setLong(mParamPosition, ((Long) param.inputValue).longValue());
+						break;
+					case java.sql.Types.DOUBLE:
+						System.out.println("===>" + param.inputValue);
+						dbCallableStatement.setDouble(mParamPosition, ((Double) param.inputValue).doubleValue());
+						break;
+					case java.sql.Types.BIGINT:
+						dbCallableStatement.setLong(mParamPosition, ((Long) param.inputValue).longValue());
+						break;
+					case java.sql.Types.VARBINARY:
+						String imgPath = (String) param.inputValue;
+						if (!imgPath.equalsIgnoreCase("")) {
+							FileInputStream fis;
+							File image = new File((String) param.inputValue);
+							fis = new FileInputStream(image);
+							dbCallableStatement.setBinaryStream(mParamPosition, (fis), (int) image.length());
+						} else {
+							dbCallableStatement.setBinaryStream(mParamPosition, null, 0);
+						}
+						break;
+					default:
+						throw new Exception("Data Type Not supported ");
+					}
+				}
+				mCounter++;
+				mParamPosition++;
+			}
+			isResultset = dbCallableStatement.execute();
+			System.out.println("isResultset : " + isResultset);
+			System.out.println(mParamCount - mCursorParamCount);
+			int startindexPosition = (mParamCount - mCursorParamCount);
+			int endindexPosition = mParamCount - 1;
+			int counter = 0;
+			while (startindexPosition <= endindexPosition) {
+				ResultSet dbResultSet = null;
+				CachedRowSetImpl rowset = null;
+				System.out.println("start index :" + startindexPosition + "startindexPosition :" + endindexPosition);
+				if (isResultset) {
+					if (counter == 0) {
+						System.out.println("Inside getresultset");
+						dbResultSet = dbCallableStatement.getResultSet();
+					} else {
+						System.out.println("Inside else getresultset");
+						isResultset = dbCallableStatement.getMoreResults();
+						if (isResultset)
+							dbResultSet = dbCallableStatement.getResultSet();
+					}
+					rowset = new CachedRowSetImpl();
+					if (dbResultSet != null) {
+						rowset.populate(dbResultSet);
+						System.out.println("Inside Seting Rowset");
+					}
+					mProcedureMetaData.dbProcedureParameters.get(startindexPosition).setOutputValue(rowset);
+				}
+
+				startindexPosition++;
+				counter++;
+			}
+
+			mCounter = 0;
+			mParamPosition = 1;
+			System.out.println("mParamCount :" + mParamCount);
+			while (mCounter < mParamCount) {
+				Parameter param = mProcedureMetaData.dbProcedureParameters.get(mCounter);
+				System.out.println("counter :" + mCounter + " Is Out :" + param.isOutParameter);
+				if (param.isOutParameter) {
+					System.out.print("OUT PARAMERTERS " + param.sqlType);
+					if (param.sqlType == ProcedureMetaData.TYPE_CURSOR) {
+						// NO CODE ZONE
+					} else {
+						switch (param.sqlType) {
+						case java.sql.Types.VARCHAR:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getString(mParamPosition));
+							break;
+						case java.sql.Types.BOOLEAN:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getBoolean(mParamPosition));
+							break;
+						case java.sql.Types.INTEGER:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getInt(mParamPosition));
+							break;
+						case java.sql.Types.NUMERIC:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getLong(mParamPosition));
+							break;
+						case java.sql.Types.DOUBLE:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getDouble(mParamPosition));
+							break;
+						case java.sql.Types.BIGINT:
+							mProcedureMetaData.dbProcedureParameters.get(mCounter).setOutputValue(dbCallableStatement.getLong(mParamPosition));
+							break;
+						default:
+							throw new Exception("Data Type Not supported ");
+						}
+					}
+				}
+				mCounter++;
+				mParamPosition++;
+			}
+			// LOG.debug("Executing  : ProcedureMetaData ending");
+
+		} catch (SQLException se) {
+			// LOG.equals("SQL ERROR :"+se.getStackTrace());
+			System.out.println("SQL ERROR :");
+			se.printStackTrace();
+		} catch (Exception e) {
+			// LOG.equals("SQL ERROR :"+e.getStackTrace());
+			System.out.println("General ERROR :");
+			e.printStackTrace();
+		}
+		return mProcedureMetaData;
+
+	}
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-------
+ConnectionMangaer.java
+
+/**
+ * @ Title:      MCPG
+ * @ Version:	 1.0
+ * @ Copyright:  Copyright (c) 2010
+ * @ Author:     Pritish Mhapankar
+ * @ Company:    CCAvenues
+ * @ Modified:   02-Dec-2010
+ * @ Description: 
+ */
+package com.ccavenue.store.common;
+
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+
+import javax.naming.Context;
+import javax.naming.InitialContext;
+
+/**
+ * @author developer-201
+ * 
+ *         This class is used to fetch database connection from the connection
+ *         pool created using JNDI datasource.
+ * 
+ */
+public class ConnectionManager {
+
+	// static Logger LOG = Logger.getLogger(ConnectionManager.class.getName());
+
+	/**
+	 * This methods returns the connection as per the settings done in the
+	 * properties
+	 * 
+	 * @return Connection object
+	 */
+	public static Connection getConnection() {
+
+		javax.sql.DataSource dbDatasource = null;
+		Context mContext = null;
+		Connection dbConnection = null;
+
+		try {
+			mContext = new InitialContext();
+			dbDatasource = (javax.sql.DataSource) mContext.lookup("java:/MCPG_JNDI");
+			// dbDatasource = (javax.sql.DataSource)
+			// mContext.lookup("java:/MCPG_JNDI");
+			dbConnection = dbDatasource.getConnection();
+		} catch (Exception e) {
+			// LOG.error("Error While connecting :" + e);
+
+		}
+		return dbConnection;
+
+	}
+
+	public static Connection getConnection(String jndi) {
+
+		javax.sql.DataSource dbDatasource = null;
+		Context mContext = null;
+		Connection dbConnection = null;
+
+		try {
+			mContext = new InitialContext();
+			dbDatasource = (javax.sql.DataSource) mContext.lookup(jndi);
+			dbConnection = dbDatasource.getConnection();
+		} catch (Exception e) {
+			// LOG.error("Error While connecting :" + e);
+		}
+		return dbConnection;
+	}
+
+	/**
+	 * This methods returns the connection as per the user (Like
+	 * SELECT,INSERT,UPDATE,DELETE) properties
+	 * 
+	 * @return Connection object
+	 */
+	/*
+	 * public static Connection getConnection(String pUser) {
+	 * 
+	 * javax.sql.DataSource dbDatasource = null; Context mContext = null;
+	 * Connection dbConnection = null;
+	 * 
+	 * try { mContext = new InitialContext(); dbDatasource =
+	 * (javax.sql.DataSource) mContext.lookup("java:MSSQLDS_" + pUser);
+	 * dbConnection = dbDatasource.getConnection(); } catch (Exception e) { //
+	 * LOG.error("Error While connecting :" + e);
+	 * 
+	 * } return dbConnection;
+	 * 
+	 * }
+	 *//**
+		 * This method is used to closed the connection passed as parameter
+		 * 
+		 * @param mConnection
+		 */
+	public static void closeConnection(Connection mConnection) {
+		try {
+			if (mConnection != null)
+				mConnection.close();
+		} catch (Exception e) {
+			// LOG.error("Error While closing connection  :" + e);
+		}
+	}
+
+	/**
+	 * This method is used to closed the resultSet passed as parameter
+	 * 
+	 * @param dbResultSet
+	 */
+	public static void closeResultSet(ResultSet dbResultSet) {
+		try {
+			if (dbResultSet != null)
+				dbResultSet.close();
+		} catch (Exception e) {
+			// LOG.error("Error While closing resultset :" + e);
+		}
+	}
+
+	/**
+	 * This method is used to closed the callableStatement passed as parameter
+	 * 
+	 * @param dbCallableStatement
+	 */
+	public static void closeCallableStatement(CallableStatement dbCallableStatement) {
+		try {
+			if (dbCallableStatement != null)
+				dbCallableStatement.close();
+		} catch (Exception e) {
+			// LOG.error("Error While closing callableStatement :" + e);
+		}
+	}
+
+	/**
+	 * This method is used to closed the preparedStatement passed as parameter
+	 * 
+	 * @param dbPreparedStatement
+	 */
+	public static void closePreparedStatement(PreparedStatement dbPreparedStatement) {
+		try {
+			if (dbPreparedStatement != null)
+				dbPreparedStatement.close();
+		} catch (Exception e) {
+			// LOG.error("Error While closing callableStatement :" + e);
+		}
+	}
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
