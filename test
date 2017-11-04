@@ -1,0 +1,43 @@
+//calling Procedure from utility
+			Procedure vProcedure=ProcedureFactory.getProcedure();
+			ProcedureMetaData vProcedureMetaData;
+			String vIsError;
+			String vIsErrorDesc;
+			Integer vBillId=0;
+			String pmerchantId=null;
+			try{
+				vProcedureMetaData=new ProcedureMetaData("ProcedureName");
+				/**
+				 * [CCAV_$Bill_Payment_ins]
+				 * @P_reg_id INT
+				 * @P_billing Customername Varchar(199)
+				 */
+				vProcedureMetaData.addParameter(pmerchantId, java.sql.Types.VARCHAR, false);
+				vProcedureMetaData.addParameter(pmerchantId, java.sql.Types.VARCHAR, false);
+				if(vProcedureMetaData!=null){
+					ProcedureMetaData procedureMetaData=vProcedure.execute(vProcedureMetaData);
+				}
+				vBillId=(Integer)vProcedureMetaData.getParameterByindex(2).getOutputValue();
+				vIsError=(String)vProcedureMetaData.getParameterByindex(2).getOutputValue();
+				vIsErrorDesc=(String)vProcedureMetaData.getParameterByindex(2).getOutputValue();
+				if(vIsError!=null){
+					//pInvoiceForm.setvIsErroDescr(vIsErrorDesc);
+					//pInvoiceForm.setvIsError(vIsError);
+					System.out.println("Exception while inserting data");
+				}
+			}catch(Exception ex){
+				ex.printStackTrace();
+			}
+			
+		}catch(Exception ex){
+			//System.out.println("exception occured in dao impl" + ex);
+			//DBConnection.closeConnection();
+			ex.printStackTrace();
+		}finally{
+			try{
+				//Procedure.closeResource();
+			}catch(Exception ex){
+				System.out.println("Exception while closing Resources");
+				ex.printStackTrace();
+			}
+		}
